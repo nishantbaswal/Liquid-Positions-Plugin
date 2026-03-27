@@ -13,6 +13,7 @@ import "@cryptoalgebra/integral-core/contracts/libraries/Plugins.sol";
 import "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/interfaces/IERC721Receiver.sol";
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
@@ -23,9 +24,10 @@ import {ILPTokenFactory} from "./interfaces/ILPTokenFactory.sol";
 
 /// @title LPPlugin
 /// @notice Plugin to manage LPToken representations of NFT positions in Algebra
-contract LPPlugin is AbstractPlugin, IERC721Receiver {
+contract LPPlugin is AbstractPlugin, IERC721Receiver, ReentrancyGuard {
     event TokenCreated(int24 tickLower, int24 tickUpper, address addr);
     event FeeRateUpdated(uint24 newFeeRate);
+    event TrustedNFTManagerUpdated(address indexed manager, bool trusted);
 
     struct CollectParams {
         address recipient;
@@ -50,6 +52,9 @@ contract LPPlugin is AbstractPlugin, IERC721Receiver {
 
     // Plugin state variables
     mapping(int24 => mapping(int24 => address)) public lpTokenByTicks; // Maps tick ranges to LPToken addresses
+
+    /// @notice Allowlist of trusted NonfungiblePositionManager contracts
+    mapping(address => bool) public trustedNFTManagers;
 
     uint256 private constant INITIAL_LP_TOKEN_TO_MINT = 10 ** 32;
 
@@ -159,7 +164,7 @@ contract LPPlugin is AbstractPlugin, IERC721Receiver {
         int24 tickLower,
         int24 tickUpper,
         uint128 lpTokensToBurn
-    ) public returns (uint256 amount0, uint256 amount1) {
+    ) public nonReentrant returns (uint256 amount0, uint256 amount1) {
         require(lpTokensToBurn > 0, "Invalid LP tokens value");
 
         ILPToken lpToken = ILPToken(lpTokenByTicks[tickLower][tickUpper]);
@@ -207,6 +212,15 @@ contract LPPlugin is AbstractPlugin, IERC721Receiver {
         _authorize();
         require(newFeeRate < 250000, "Fee rate too high");
         pluginFeeRate = newFeeRate;
+    }
+
+    /// @notice Add or remove a trusted NonfungiblePositionManager (only callable by factory)
+    /// @param manager Address of the position manager contract
+    /// @param trusted Whether the manager should be trusted
+    function setTrustedNFTManager(address manager, bool trusted) external {
+        _authorize();
+        trustedNFTManagers[manager] = trusted;
+        emit TrustedNFTManagerUpdated(manager, trusted);
     }
 
     /// @notice ERC721 callback to allow plugin to receive NFT
